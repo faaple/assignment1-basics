@@ -1,8 +1,21 @@
 # cs336_basics/bpe.py
 from collections import Counter
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Iterable
 # from pretokenization_example import find_chunk_boundaries
 import regex as re
+
+def pre_tokenization(
+    chunks: Iterable[str]
+) -> Counter[tuple[bytes, ...]]:
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    token_counts = Counter()
+    for chunk in chunks:
+        for match in re.finditer(PAT, chunk):
+            pre_token = match.group().encode("utf-8")
+            if len(pre_token) != 1:
+                # turn the bytestring object into a tuple of bytestring objects of single byte
+                token_counts[tuple(bytes([x]) for x in pre_token)] += 1
+    return token_counts
 
 def train_bpe(
     input_path: str,
@@ -34,15 +47,7 @@ def train_bpe(
     vocab_count += len(special_tokens)
 
     # 3. pre-tokenization
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    token_counts = Counter()
-    for chunk in chunks:
-        for match in re.finditer(PAT, chunk):
-            pre_token = match.group().encode("utf-8")
-            if len(pre_token) != 1:
-                # turn the bytestring object into a tuple of bytestring objects of single byte
-                token_counts[tuple(bytes([x]) for x in pre_token)] += 1
-    
+    token_counts = pre_tokenization(chunks) 
 
     # 4. compute BPE merges
     merges = []
