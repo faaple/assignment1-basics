@@ -51,17 +51,19 @@ def train_bpe(
 
     # 4. compute BPE merges
     merges = []
+    # 4.1. counts every pair
+    pair_counts = Counter()
+    for pre_token, count in token_counts.items():
+        for left, right in zip(pre_token, pre_token[1:]):
+            pair_counts[(left, right)] += count
+
     for index in range(vocab_size - vocab_count):
-        # 4.1. counts every pair NOTE: we count all pairs everytime
-        pair_counts = Counter()
-        for pre_token, count in token_counts.items():
-            for left, right in zip(pre_token, pre_token[1:]):
-                pair_counts[(left, right)] += count
         # 4.1. identify the pair with the highest frequency
         if not pair_counts:
             break
         best_pair = max(pair_counts, key=lambda k: (pair_counts[k], k))
         merges.append(best_pair)
+        new_merge_token = best_pair[0] + best_pair[1]
         # 4.2. merge the pair in `pre_token`
         for pre_token, count in list(token_counts.items()):
             new_tokens = []
@@ -70,8 +72,15 @@ def train_bpe(
             while i < len(pre_token):
                 if i < len(pre_token)-1 and (pre_token[i], pre_token[i+1]) == best_pair:
                     new_tokens.append(pre_token[i] + pre_token[i+1])
-                    i += 2
                     merge = True
+                    # 4.1. update `pair_count`
+                    if i > 0:
+                        pair_counts[(pre_token[i-1], new_merge_token)] += count
+                        pair_counts[(pre_token[i-1], pre_token[i])] -= count
+                    if i < len(pre_token)-2:
+                        pair_counts[(new_merge_token, pre_token[i+2])] += count
+                        pair_counts[(pre_token[i+1], pre_token[i+2])] -= count
+                    i += 2
                 else:
                     new_tokens.append(pre_token[i])
                     i += 1
@@ -79,8 +88,10 @@ def train_bpe(
                 token_counts[tuple(new_tokens)] += token_counts[pre_token]
                 del token_counts[pre_token]
         # 4.3. add the new merged token to the vocabulary
-        vocab.update({vocab_count: best_pair[0] + best_pair[1]})
+        vocab.update({vocab_count: new_merge_token})
         vocab_count += 1
+        # 4.1. update `pair_count`
+        del pair_counts[best_pair]
 
     return vocab, merges
 
@@ -90,8 +101,6 @@ def main():
     special_tokens = ["<|endoftext|>"]      # your special tokens
 
     vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
-
-    print(vocab)
 
 
 if __name__ == "__main__":
