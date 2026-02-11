@@ -3,6 +3,7 @@ from collections import Counter
 from typing import List, Tuple, Dict, Iterable
 # from pretokenization_example import find_chunk_boundaries
 import regex as re
+import os
 
 def pre_tokenization(
     chunks: Iterable[str]
@@ -16,6 +17,19 @@ def pre_tokenization(
                 # turn the bytestring object into a tuple of bytestring objects of single byte
                 token_counts[tuple(bytes([x]) for x in pre_token)] += 1
     return token_counts
+
+def save_vocab(vocab: dict[int, bytes], filepath: str) -> None:
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        for token_id in sorted(vocab):
+            token_bytes = vocab[token_id]
+            f.write(f"{token_id} {token_bytes.hex()}\n")
+
+def save_merges(merges: list[tuple[bytes, bytes]], filepath: str) -> None:
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "w", encoding="utf-8") as f:
+        for a, b in merges:
+            f.write(f"{a.hex()} {b.hex()}\n")
 
 def train_bpe(
     input_path: str,
@@ -69,15 +83,16 @@ def train_bpe(
             new_tokens = []
             i = 0
             merge = False
-            while i < len(pre_token):
-                if i < len(pre_token)-1 and (pre_token[i], pre_token[i+1]) == best_pair:
+            length = len(pre_token)
+            while i < length:
+                if i < length-1 and (pre_token[i], pre_token[i+1]) == best_pair:
                     new_tokens.append(pre_token[i] + pre_token[i+1])
                     merge = True
                     # 4.1. update `pair_count`
                     if i > 0:
                         pair_counts[(pre_token[i-1], new_merge_token)] += count
                         pair_counts[(pre_token[i-1], pre_token[i])] -= count
-                    if i < len(pre_token)-2:
+                    if i < length-2:
                         pair_counts[(new_merge_token, pre_token[i+2])] += count
                         pair_counts[(pre_token[i+1], pre_token[i+2])] -= count
                     i += 2
@@ -96,12 +111,15 @@ def train_bpe(
     return vocab, merges
 
 def main():
-    input_path = "data/test1.txt"        # path to your text file
+    data_name = "test2"
+    input_path = f"data/{data_name}.txt"        # path to your text file
     vocab_size = 1000                        # desired vocabulary size
     special_tokens = ["<|endoftext|>"]      # your special tokens
 
     vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
 
+    save_vocab(vocab, f"result/{data_name}/vocab.txt")
+    save_merges(merges, f"result/{data_name}/merges.txt")
 
 if __name__ == "__main__":
     main()
