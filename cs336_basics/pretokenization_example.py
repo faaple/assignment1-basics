@@ -1,6 +1,32 @@
 import os
+import regex as re
 from typing import BinaryIO
+from collections import Counter
 
+def pretokenize_chunk(
+    input_path: str, 
+    start: int,
+    end: int,
+    special_tokens: list[str]
+) -> Counter[tuple[bytes, ...]]:
+    with open(input_path, "rb") as f:
+        f.seek(start)
+        text = f.read(end - start).decode("utf-8", errors="ignore")
+
+    # 2. removing special tokens
+    escaped_tokens = [re.escape(token) for token in special_tokens]
+    pattern = "|".join(escaped_tokens)
+    chunks = re.split(pattern, text)
+
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    token_counts = Counter()
+    for chunk in chunks:
+        for match in re.finditer(PAT, chunk):
+            pre_token = match.group().encode("utf-8")
+            if len(pre_token) != 1:
+                # turn the bytestring object into a tuple of bytestring objects of single byte
+                token_counts[tuple(bytes([x]) for x in pre_token)] += 1
+    return token_counts
 
 def find_chunk_boundaries(
     file: BinaryIO,
@@ -48,7 +74,7 @@ def find_chunk_boundaries(
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
     return sorted(set(chunk_boundaries))
 
-
+"""
 ## Usage
 with open(..., "rb") as f:
     num_processes = 4
@@ -60,3 +86,4 @@ with open(..., "rb") as f:
         f.seek(start)
         chunk = f.read(end - start).decode("utf-8", errors="ignore")
         # Run pre-tokenization on your chunk and store the counts for each pre-token
+"""
