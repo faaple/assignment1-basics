@@ -1,22 +1,19 @@
 # cs336_basics/bpe.py
 from collections import Counter
-from typing import List, Tuple, Dict, Iterable
-# from pretokenization_example import find_chunk_boundaries
+from multiprocessing import Pool
+# from typing import List, Tuple, Dict, Iterable
+from collections.abc import Iterable
+from cs336_basics.pretokenization_example import find_chunk_boundaries, pretokenize_chunk
 import regex as re
 import os
+import time
+import resource
 
-def pre_tokenization(
-    chunks: Iterable[str]
-) -> Counter[tuple[bytes, ...]]:
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    token_counts = Counter()
-    for chunk in chunks:
-        for match in re.finditer(PAT, chunk):
-            pre_token = match.group().encode("utf-8")
-            if len(pre_token) != 1:
-                # turn the bytestring object into a tuple of bytestring objects of single byte
-                token_counts[tuple(bytes([x]) for x in pre_token)] += 1
-    return token_counts
+def memory_mb():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+def pretokenize_chunk_wrapper(args):
+    return pretokenize_chunk(*args)
 
 def save_vocab(vocab: dict[int, bytes], filepath: str) -> None:
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -42,26 +39,35 @@ def train_bpe(
         vocab: dict[int, bytes] mapping token ID -> token bytes
         merges: list of byte-pair tuples representing BPE merges
     """
+    # 3. pre-tokenization
+    start_time = time.perf_counter()
+    num_processes = 16
+    num_chunks = 512
+    with open(input_path, "rb") as f: # rb: read binary
+        boundaries = find_chunk_boundaries(f, num_chunks, b"<|endoftext|>")
 
-    with open(input_path, "rb") as f:
-        corpus_bytes = f.read()
-    
-    text = corpus_bytes.decode("utf-8", errors="ignore")
+    args = [
+        (input_path, start, end, special_tokens)
+        for start, end in zip(boundaries[:-1], boundaries[1:])
+    ]
+    token_counts = Counter()
+    with Pool(processes=num_processes) as pool:
+        for counter in pool.imap_unordered(pretokenize_chunk_wrapper, args):
+            token_counts.update(counter)
+
+    # token_counts = Counter()
+    # for start, end in zip(boundaries[:-1], boundaries[1:]):
+    #     count = pretokenize_chunk(input_path, start, end, special_tokens)
+    #     token_counts += count
+
+    print(f"pre-tokenization: {(time.perf_counter()-start_time)/60:.3f} minutes")
 
     # 1. vocabulary initialization
     vocab_count = 256
     vocab = {i: bytes([i]) for i in range(vocab_count)}
 
-    # 2. removing special tokens
-    escaped_tokens = [re.escape(token) for token in special_tokens]
-    pattern = "|".join(escaped_tokens)
-    chunks = re.split(pattern, text)
-
     vocab.update({vocab_count + i: token.encode("utf-8") for i, token in enumerate(special_tokens)})
     vocab_count += len(special_tokens)
-
-    # 3. pre-tokenization
-    token_counts = pre_tokenization(chunks) 
 
     # 4. compute BPE merges
     merges = []
@@ -79,15 +85,17 @@ def train_bpe(
         merges.append(best_pair)
         new_merge_token = best_pair[0] + best_pair[1]
         # 4.2. merge the pair in `pre_token`
-        for pre_token, count in list(token_counts.items()):
-            new_tokens = []
+        for pre_token, count in list(token_counts.items()): # list() allows modification
             i = 0
-            merge = False
+            merge = 0
             length = len(pre_token)
             while i < length:
                 if i < length-1 and (pre_token[i], pre_token[i+1]) == best_pair:
-                    new_tokens.append(pre_token[i] + pre_token[i+1])
-                    merge = True
+                    if merge == 0:
+                        new_tokens = list(pre_token)
+                    new_tokens[i-merge] = new_merge_token
+                    new_tokens.pop(i-merge+1)
+                    merge += 1
                     # 4.1. update `pair_count`
                     if i > 0:
                         pair_counts[(pre_token[i-1], new_merge_token)] += count
@@ -97,7 +105,6 @@ def train_bpe(
                         pair_counts[(pre_token[i+1], pre_token[i+2])] -= count
                     i += 2
                 else:
-                    new_tokens.append(pre_token[i])
                     i += 1
             if merge:
                 token_counts[tuple(new_tokens)] += token_counts[pre_token]
@@ -108,12 +115,13 @@ def train_bpe(
         # 4.1. update `pair_count`
         del pair_counts[best_pair]
 
+    print(f"total time: {(time.perf_counter()-start_time)/60:.3f} minutes")
     return vocab, merges
 
 def main():
-    data_name = "test2"
+    data_name = "owt_train"
     input_path = f"data/{data_name}.txt"        # path to your text file
-    vocab_size = 1000                        # desired vocabulary size
+    vocab_size = 32000                        # desired vocabulary size
     special_tokens = ["<|endoftext|>"]      # your special tokens
 
     vocab, merges = train_bpe(input_path, vocab_size, special_tokens)
